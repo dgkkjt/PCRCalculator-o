@@ -1,0 +1,38 @@
+name: Build and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build a package from master (Linux only from ver_1.x)
+        type: choice
+        required: true
+        default: linux
+        options:
+          - linux
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Package Linux .NET server from master
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          lfs: true
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Test server packaging
+        run: python3 scripts/test_build_server.py
+      - name: Build server package
+        run: ./build.sh --target linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PCRCalculatorServer_linux-x64
+          path: Builds/mzq-linux-x64.zip
+          if-no-files-found: error
