@@ -119,6 +119,29 @@ namespace UnityEngine
         {
         }
 
+        // Not a Unity asset lifecycle hook: the .NET worker pool owns this exclusive boundary.
+        internal static (int Bundles, int Objects, int Effects) ReleaseServerMemoryCaches()
+        {
+            lock (loaderLock)
+            {
+                // Prepare a usable loader before retiring the old one. Shared type metadata is small.
+                var replacement = new AssetsManager();
+                replacement.LoadClassPackage(Path.Combine(AppContext.BaseDirectory, "classdata.tpk"));
+                replacement.LoadClassDatabaseFromPackage("2021.3.21f1");
+                var counts = (loadedBundle.Count, ObjectManager.pool.Count, ObjectManager.lightweightEffectPrefabPool.Count);
+                var previous = am;
+                am = replacement;
+                loadedBundle = new Dictionary<string, AssetBundle>();
+                serverCompactedBattleunitBundleNames = new HashSet<string>();
+                ObjectManager.ReleaseServerMemoryCaches();
+                try { previous.UnloadAllAssetsFiles(true); }
+                catch (Exception error) { Console.Error.WriteLine($"[IdleResourceRelease] assets unload: {error}"); }
+                try { previous.UnloadAllBundleFiles(); }
+                catch (Exception error) { Console.Error.WriteLine($"[IdleResourceRelease] bundles unload: {error}"); }
+                return counts;
+            }
+        }
+
         internal IEnumerable<string> GetAllAssetNames()
         {
             return pathMap?.Keys ?? Enumerable.Empty<string>();
@@ -317,10 +340,17 @@ namespace UnityEngine
 
         private static class ObjectManager
         {
-            private static Dictionary<(string bundleName, long pathId), object> pool = new();
-            private static Dictionary<(string bundleName, long pathId), GameObject> lightweightEffectPrefabPool = new();
+            internal static Dictionary<(string bundleName, long pathId), object> pool = new();
+            internal static Dictionary<(string bundleName, long pathId), GameObject> lightweightEffectPrefabPool = new();
             private static HashSet<(string bundleName, long pathId)> effectPrefabReferenceKeys = new();
             private static Dictionary<Type, Action<object, Dictionary<string, AssetTypeValueField>, Func<(long fileId, long pathId), Type, object>>> serializeFieldCache = new();
+
+            internal static void ReleaseServerMemoryCaches()
+            {
+                pool = new();
+                lightweightEffectPrefabPool = new();
+                effectPrefabReferenceKeys = new();
+            }
 
             private sealed class FullEffectPrefabReference
             {

@@ -20,9 +20,9 @@ using UnityEngine;
 #if ENABLE_THREADING
 public class ThreadController : IDisposable
 {
-    private readonly BlockingCollection<(BattleSimulationRequest request, Action callback, Action<Exception> callbackFailed)> queue = new();
+    private readonly PCRCalculatorServer.IdleWorkerPool<(BattleSimulationRequest request, Action callback, Action<Exception> callbackFailed)> pool;
 
-    public ThreadController(int? workerNum = null)
+    public ThreadController(int? workerNum = null, int idleReleaseSeconds = 300)
     {
         int effectiveWorkerNum = workerNum ?? ProcessorHelper.GetTotalLogicalProcessorCount();
         
@@ -44,39 +44,27 @@ public class ThreadController : IDisposable
         while (!MainManager.Instance.LoadFinished)
             Thread.Sleep(0);
 
-        for (var i = 0; i < effectiveWorkerNum; ++i)
+        pool = new(effectiveWorkerNum, TimeSpan.FromSeconds(idleReleaseSeconds), index =>
         {
-            int threadIndex = i;
-            new Thread(() => WorkerTask(threadIndex), 5 * 1024 * 1024).Start();
-        }
+            ProcessorHelper.SetThreadGroupAffinityForIndex(index);
+            ThreadInit();
+        }, work =>
+        {
+            Simulate(work.request);
+            work.callback();
+        }, (work, error) =>
+        {
+            if (work.callbackFailed != null) work.callbackFailed(error);
+            else Console.WriteLine(error);
+        }, PCRCalculatorServer.ServerBattleResources.Release);
     }
 
     public void DispatchTask(BattleSimulationRequest request, Action callback, Action<Exception> callbackFailed)
     {
-        queue.Add((request, callback, callbackFailed));
+        pool.Dispatch((request, callback, callbackFailed));
     }
 
-    private void WorkerTask(int threadIndex)
-    {
-        ProcessorHelper.SetThreadGroupAffinityForIndex(threadIndex);
-        ThreadInit();
-        foreach (var (request, callback, callbackFailed) in queue.GetConsumingEnumerable())
-        {
-            try
-            {
-                // Debug.Log($"[BattleSimulationServer] 战斗请求：{JsonConvert.SerializeObject(request)}");
-                Simulate(request);
-                callback();
-            }
-            catch (Exception e)
-            {
-                if (callbackFailed != null)
-                    callbackFailed(e);
-                else
-                    Console.WriteLine(e);
-            }
-        }
-    }
+    internal PCRCalculatorServer.IdleWorkerPoolSnapshot ResourceState => pool.Snapshot;
     private static void ThreadInit()
     {
         new GuildManager()
@@ -182,8 +170,7 @@ public class ThreadController : IDisposable
 
     public void Dispose()
     {
-        queue.CompleteAdding();
-        queue.Dispose();
+        pool.Dispose();
     }
 }
 

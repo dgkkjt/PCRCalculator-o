@@ -6,6 +6,9 @@ Logs
 Library
 MemoryCaptures
 Builds/MacOS
+Builds/Linux*/
+Builds/mzq-linux-x64.zip
+__pycache__/
 .vs
 bin/
 obj/

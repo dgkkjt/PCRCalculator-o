@@ -1,6 +1,6 @@
 # PCRCalculatorServer HTTP API 接入说明
 
-本文面向外部调用方，描述本仓库当前 .NET server 的 HTTP 接口。服务端与 Unity 客户端共享战斗代码，HTTP 层使用 ASP.NET Core。最后核对日期为 2026-11-13。
+本文面向外部调用方，描述本仓库当前 .NET server 的 HTTP 接口。服务端与 Unity 客户端共享战斗代码，HTTP 层使用 ASP.NET Core。最后核对日期为 2026-11-15。
 
 ## 1. 启动与基础约定
 
@@ -24,6 +24,7 @@ dotnet PCRCalculatorServer.dll --server --host 127.0.0.1 --port 8080
 | `--host` | `localhost` | 监听地址，其他机器访问时可设为 `0.0.0.0` |
 | `--port` | `8080` | HTTP 端口 |
 | `--debug` | 关闭 | 打印调试信息，并将模拟请求的 `IsSkipping` 设为 `false` |
+| `--idle-release-seconds` | `300` | 队列为空且所有战斗、结果回调结束后，持续空闲指定秒数释放战斗内存缓存；`0` 关闭 |
 
 初始化会加载数据库、缓存及资源，完成后才开始接受 HTTP 请求。桌面分发包还需保留 server 随附的 `Data/StreamingAssets`、`classdata.tpk` 等文件。打包与目录说明见 [BUILDING.md](../BUILDING.md)。
 
@@ -35,6 +36,7 @@ dotnet PCRCalculatorServer.dll --server --host 127.0.0.1 --port 8080
 | --- | --- |
 | `PCRCALC_PERSISTENT_DATA_PATH` | 数据库、资源缓存所在目录 |
 | `PCRCALC_VERSION_DATA` | `MainManager.VersionData` 的 JSON，覆盖进程所用版本配置 |
+| `PCRCALC_IDLE_RELEASE_SECONDS` | 空闲释放等待秒数，默认 `300`；命令行 `--idle-release-seconds` 优先，`0` 关闭；无效值会在启动时报错 |
 
 版本 JSON 示例中的数值需替换为已准备的数据版本。
 
@@ -69,6 +71,24 @@ dotnet PCRCalculatorServer.dll --server --host 127.0.0.1 --port 8080
 以下说明针对 .NET server。源码中 Unity `HttpListener` 使用的任务 UID、`/result/{uid}` 等协议属于另一套服务入口。外部接入本文接口时，等待 `/simulate` 的最终响应即可。
 
 接口路由和序列化配置见 [ApiController.cs](ApiController.cs) 与 [ArenaController.cs](ArenaController.cs)。
+
+### 1.4 空闲资源释放
+
+默认在持续空闲 5 分钟后，服务器结束旧模拟线程，释放线程本地及全局战斗资源缓存，再执行集中内存回收。数据库派生数据、资源清单、ONNX 会话和磁盘上的 `Pool`、`.ABExt2` 等文件保留。下一次模拟会创建新线程并按需从本地缓存重新加载。
+
+HTTP 服务在回收期间继续监听，到达的模拟请求正常排队并等待完整结果，不切换成任务 ID/轮询协议，不因正常回收返回 503 或空数组。正在执行的战斗和结果回调不会被回收打断。持续空闲且未重新加载资源时，不重复启动回收。
+
+回收可能使新请求等待，并增加首场模拟的资源解析时间。调用方的现有超时仍然生效；应将回收等待、资源重载、排队和模拟时间一起计入超时预算。空闲释放不能限制连续繁忙时的全角色峰值，也不会自动改变 worker 数或启用资源精简开关。
+
+```bash
+# 默认：持续空闲 300 秒释放；显式配置示例
+dotnet PCRCalculatorServer.dll --server --idle-release-seconds 300
+
+# 关闭自动空闲释放
+dotnet PCRCalculatorServer.dll --server --idle-release-seconds 0
+```
+
+每轮输出 `[IdleResourceRelease] starting/completed` 日志，包含释放条目数、耗时及回收前后的托管内存、进程私有内存和驻留内存。资源加载器无法安全恢复时会记录失败并使等待任务收到错误，避免继续使用半失效缓存。
 
 ## 2. POST /simulate
 

@@ -11,14 +11,39 @@ internal class ConcurrentCache<TKey, TValue>
     private static Dictionary<TKey, TValue> threadLocalCache;
 
     private static Dictionary<TKey, TValue> globalCache = new();
+    private static readonly object cacheLock = new();
+    private static long generation;
+    [ThreadStatic] private static long localGeneration;
+
+    private static void EnsureLocalCache()
+    {
+        var current = System.Threading.Volatile.Read(ref generation);
+        if (threadLocalCache == null || localGeneration != current)
+        {
+            threadLocalCache = new();
+            localGeneration = current;
+        }
+    }
+
+    // Server calls this only after all resource-owning worker threads have exited.
+    public void Clear()
+    {
+        lock (cacheLock)
+        {
+            globalCache = new();
+            System.Threading.Interlocked.Increment(ref generation);
+            threadLocalCache = null;
+        }
+    }
 
     public bool TryGetValue(TKey key, out TValue value)
     {
-        threadLocalCache ??= new();
+        EnsureLocalCache();
         if (threadLocalCache.TryGetValue(key, out value)) return true;
 
-        lock (globalCache)
+        lock (cacheLock)
         {
+            EnsureLocalCache();
             if (globalCache.TryGetValue(key, out value))
             {
                 threadLocalCache[key] = value;
@@ -36,10 +61,10 @@ internal class ConcurrentCache<TKey, TValue>
 
     public void Add(TKey key, TValue value)
     {
-        threadLocalCache ??= new();
-        threadLocalCache.Add(key, value);
-        lock (globalCache)
+        lock (cacheLock)
         {
+            EnsureLocalCache();
+            threadLocalCache.Add(key, value);
             globalCache.TryAdd(key, value);
         }
     }

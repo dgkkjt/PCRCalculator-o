@@ -59,6 +59,14 @@ public class CommandLineServer : MonoBehaviour
             Directory.SetCurrentDirectory(exeDir);
         }
 
+        int idleReleaseSeconds;
+        try { idleReleaseSeconds = ServerOptions.ParseIdleReleaseSeconds(args); }
+        catch (ArgumentException error)
+        {
+            Console.Error.WriteLine(error.Message);
+            Environment.ExitCode = 2;
+            return;
+        }
         ParseCommandLineArgs();
         if (Debugger.IsAttached)
         {
@@ -68,23 +76,24 @@ public class CommandLineServer : MonoBehaviour
 #if ENABLE_THREADING
         if (serverMode)
         {
-            RuntimeHelpers.RunClassConstructor(typeof(ApiController).TypeHandle);
-
-            Host.CreateDefaultBuilder(args)
+            using var host = Host.CreateDefaultBuilder(args)
                 .ConfigureLogging(logger => logger.SetMinimumLevel(debugMode ? LogLevel.Information : LogLevel.Error))
                 .ConfigureServices(services =>
                 {
-                    services.AddSingleton(new ServerOptions { DebugMode = debugMode });
+                    services.AddSingleton(new ServerOptions { DebugMode = debugMode, IdleReleaseSeconds = idleReleaseSeconds });
                 })
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
                     webBuilder.UseUrls($"http://{serverHost}:{serverPort}/").UseStartup<Startup>();
-                }).Build().Run();
+                }).Build();
+            // Preserve eager data initialization before the HTTP listener accepts requests.
+            host.Services.GetRequiredService<ThreadController>();
+            host.Run();
         }
         else
         {
             // var controller = new ThreadController(1);
-            var controller = new ThreadController();
+            using var controller = new ThreadController(idleReleaseSeconds: idleReleaseSeconds);
 
             var requests = new[]
             {

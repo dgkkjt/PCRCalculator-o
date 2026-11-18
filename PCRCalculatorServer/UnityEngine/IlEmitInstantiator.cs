@@ -10,6 +10,7 @@ namespace UnityEngine;
 public static class IlEmitInstantiator
 {
     private static ConcurrentCache<object, Func<GameObject>> instantiator = new ();
+    internal static void ReleaseServerMemoryCache() => instantiator.Clear();
 
     // 递归版本
     private static void EmitValueInternal(ILGenerator il, object o, Type t, Dictionary<object, LocalBuilder> context)

@@ -23,7 +23,7 @@ namespace PCRCalculatorServer
     [ApiController]
     public class ApiController : Controller
     {
-        private static readonly ThreadController controller = new();
+        private readonly ThreadController controller;
         private static readonly JsonSerializerOptions DebugJsonOptions = new()
         {
             IncludeFields = true,
@@ -31,9 +31,10 @@ namespace PCRCalculatorServer
         };
         private readonly ServerOptions serverOptions;
 
-        public ApiController(ServerOptions serverOptions)
+        public ApiController(ServerOptions serverOptions, ThreadController controller)
         {
             this.serverOptions = serverOptions ?? throw new ArgumentNullException(nameof(serverOptions));
+            this.controller = controller ?? throw new ArgumentNullException(nameof(controller));
         }
 
         [HttpPost("/simulate")]
@@ -339,6 +340,8 @@ namespace PCRCalculatorServer
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddSingleton<ArenaModelProvider>();
+            services.AddSingleton(provider => new ThreadController(
+                idleReleaseSeconds: provider.GetRequiredService<ServerOptions>().IdleReleaseSeconds));
             services.AddControllers()
                 .AddJsonOptions(options =>
                 {

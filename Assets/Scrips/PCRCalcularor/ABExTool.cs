@@ -1194,6 +1194,16 @@ namespace PCRCaculator
         }
 
         private static ConcurrentCache<int, GameObject> prefabCache = new ConcurrentCache<int, GameObject>();
+#if !UNITY_5_3_OR_NEWER
+        // Only called at the server's global idle boundary, after every worker has exited.
+        public static void ReleaseServerMemoryCaches()
+        {
+            GetAssetBundleByNameCache.Clear();
+            prefabCache.Clear();
+            AssetBundleDic = new Dictionary<string, AssetBundle>();
+            spriteDic = new Dictionary<string, Sprite>();
+        }
+#endif
         public static GameObject LoadUnitPrefab(int unitid)
         {
             if (prefabCache.TryGetValue(unitid, out var val)) return val;
